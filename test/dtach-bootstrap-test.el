@@ -181,6 +181,19 @@
       (signal 'file-notify-error '("No file notification program found")))
     "/ssh:example:/home/me/.cache/detached/sessions")))
 
+(ert-deftest dtach-bootstrap-test-detached-shell-command-session-advice-reuses-start-session-advice ()
+  (set 'detached-dtach-program "dtach")
+  (cl-letf (((symbol-function 'dtach-bootstrap--detached-program-usable-p)
+             (lambda (&rest _) nil))
+            ((symbol-function 'dtach-bootstrap--cached-dtach)
+             (lambda (_directory) "/remote/cache/bin/dtach"))
+            ((symbol-function 'dtach-bootstrap-setup-detached-connection-local)
+             (lambda (_program))))
+    (should (equal
+             (dtach-bootstrap--around-detached-start-shell-command-session
+              (lambda () (symbol-value 'detached-dtach-program)))
+             "/remote/cache/bin/dtach"))))
+
 (ert-deftest dtach-bootstrap-test-setup-detached-sets-program ()
   (set 'detached-dtach-program "dtach")
   (cl-letf (((symbol-function 'dtach-bootstrap-ensure-for-directory)

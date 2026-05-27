@@ -582,6 +582,10 @@ generation."
     (dtach-bootstrap-setup-detached-connection-local detached-dtach-program)
     (apply orig-fun args)))
 
+(defun dtach-bootstrap--around-detached-start-shell-command-session (orig-fun &rest args)
+  "Ensure detached shell command sessions use the selected target dtach."
+  (apply #'dtach-bootstrap--around-detached-start-session orig-fun args))
+
 (defun dtach-bootstrap--around-detached-create-session (orig-fun &rest args)
   "Bind detached remote defaults before ORIG-FUN creates a session."
   (dtach-bootstrap-setup-detached-connection-local)
@@ -622,6 +626,11 @@ already smoke-tested the selected program for the target."
                                  'detached-start-session)
           (advice-add 'detached-start-session
                       :around #'dtach-bootstrap--around-detached-start-session))
+        (when (fboundp 'detached-start-shell-command-session)
+          (unless (advice-member-p #'dtach-bootstrap--around-detached-start-shell-command-session
+                                   'detached-start-shell-command-session)
+            (advice-add 'detached-start-shell-command-session
+                        :around #'dtach-bootstrap--around-detached-start-shell-command-session)))
         (when (fboundp 'detached--valid-dtach-executable-p)
           (unless (advice-member-p #'dtach-bootstrap--around-detached-valid-dtach-executable-p
                                    'detached--valid-dtach-executable-p)
@@ -644,6 +653,9 @@ already smoke-tested the selected program for the target."
   (when (fboundp 'detached-start-session)
     (advice-remove 'detached-start-session
                    #'dtach-bootstrap--around-detached-start-session))
+  (when (fboundp 'detached-start-shell-command-session)
+    (advice-remove 'detached-start-shell-command-session
+                   #'dtach-bootstrap--around-detached-start-shell-command-session))
   (when (fboundp 'detached--valid-dtach-executable-p)
     (advice-remove 'detached--valid-dtach-executable-p
                    #'dtach-bootstrap--around-detached-valid-dtach-executable-p))
