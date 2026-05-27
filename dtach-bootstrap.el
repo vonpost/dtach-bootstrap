@@ -15,6 +15,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'files-x)
 (require 'subr-x)
 (require 'tramp)
 
@@ -87,11 +88,29 @@ upward for `flake.nix'."
                  (const bootstrap)
                  (const error)))
 
+(defcustom dtach-bootstrap-detached-session-directory
+  "~/.cache/detached/sessions"
+  "Remote session directory used for detached.el TRAMP sessions."
+  :type 'directory)
+
+(defcustom dtach-bootstrap-detached-connection-profile
+  'dtach-bootstrap-detached
+  "Connection-local profile name installed for detached.el TRAMP support."
+  :type 'symbol)
+
+(defcustom dtach-bootstrap-detached-tramp-criteria
+  '((:application tramp :protocol "ssh"))
+  "Connection-local criteria where detached.el remote defaults are installed."
+  :type '(repeat sexp))
+
 (defconst dtach-bootstrap--supported-system "Linux")
 (defconst dtach-bootstrap--supported-architectures '("x86_64" "amd64"))
 
 (defvar detached-dtach-program)
+(defvar detached-session-directory)
 (defvar dtach-bootstrap-detached-mode)
+
+(declare-function detached-session-working-directory "detached" (session))
 
 (defun dtach-bootstrap--directory (directory)
   "Return DIRECTORY or `default-directory' as a directory name."
@@ -495,7 +514,23 @@ This is an alias for `dtach-bootstrap-ensure-for-directory'."
   "Return a detached dtach program for DIRECTORY, prompting if missing."
   (let ((current-program (dtach-bootstrap--detached-current-program)))
     (or (dtach-bootstrap--detached-program-usable-p directory current-program)
+        (dtach-bootstrap--cached-dtach directory)
         (dtach-bootstrap--detached-bootstrap-program directory current-program))))
+
+(defun dtach-bootstrap--detached-session-directory-for-directory (directory)
+  "Return detached session directory suitable for DIRECTORY."
+  (if (dtach-bootstrap--remote-prefix directory)
+      dtach-bootstrap-detached-session-directory
+    (when (boundp 'detached-session-directory)
+      (symbol-value 'detached-session-directory))))
+
+(defun dtach-bootstrap--detached-directory-from-session (session)
+  "Return the target directory for detached SESSION."
+  (cond
+   ((and session (fboundp 'detached-session-working-directory))
+    (detached-session-working-directory session))
+   (t
+    default-directory)))
 
 (defun dtach-bootstrap-setup-detached (&optional directory)
   "Set `detached-dtach-program' for DIRECTORY's target.
@@ -511,29 +546,109 @@ session, enable `dtach-bootstrap-detached-mode'."
          (dtach-bootstrap--directory directory)))
   detached-dtach-program)
 
+(defun dtach-bootstrap--detached-connection-local-variables (&optional program)
+  "Return detached.el connection-local variables.
+
+PROGRAM is a target-local dtach program selected for the current target."
+  (append
+   `((detached-session-directory . ,dtach-bootstrap-detached-session-directory))
+   (when program
+     `((detached-dtach-program . ,program)))))
+
+(defun dtach-bootstrap-setup-detached-connection-local (&optional program)
+  "Install connection-local detached.el defaults for TRAMP sessions.
+
+This configures `detached-session-directory' for the criteria in
+`dtach-bootstrap-detached-tramp-criteria'.  When PROGRAM is non-nil, it also
+sets `detached-dtach-program' for detached's connection-local command
+generation."
+  (interactive)
+  (connection-local-set-profile-variables
+   dtach-bootstrap-detached-connection-profile
+   (dtach-bootstrap--detached-connection-local-variables program))
+  (dolist (criteria dtach-bootstrap-detached-tramp-criteria)
+    (connection-local-set-profiles
+     criteria
+     dtach-bootstrap-detached-connection-profile)))
+
 (defun dtach-bootstrap--around-detached-start-session (orig-fun &rest args)
   "Ensure detached has a usable dtach before calling ORIG-FUN with ARGS."
-  (let* ((directory (dtach-bootstrap--directory default-directory))
+  (let* ((session (car args))
+         (directory (dtach-bootstrap--directory
+                     (dtach-bootstrap--detached-directory-from-session session)))
          (detached-dtach-program
           (dtach-bootstrap--detached-program-for-directory directory)))
+    (dtach-bootstrap-setup-detached-connection-local detached-dtach-program)
     (apply orig-fun args)))
+
+(defun dtach-bootstrap--around-detached-create-session (orig-fun &rest args)
+  "Bind detached remote defaults before ORIG-FUN creates a session."
+  (dtach-bootstrap-setup-detached-connection-local)
+  (apply orig-fun args))
+
+(defun dtach-bootstrap--around-detached-valid-dtach-executable-p (orig-fun session)
+  "Validate dtach for SESSION using dtach-bootstrap before ORIG-FUN.
+
+Detached's own validator uses `executable-find', which does not reliably
+validate target-local absolute paths for TRAMP sessions.  dtach-bootstrap has
+already smoke-tested the selected program for the target."
+  (if (dtach-bootstrap--remote-prefix
+       (dtach-bootstrap--detached-directory-from-session session))
+      (progn
+        (dtach-bootstrap--detached-program-for-directory
+         (dtach-bootstrap--detached-directory-from-session session))
+        t)
+    (funcall orig-fun session)))
+
+(defun dtach-bootstrap--around-detached-watch-session-directory (orig-fun session-directory)
+  "Call ORIG-FUN for SESSION-DIRECTORY, ignoring unsupported remote watches."
+  (condition-case err
+      (funcall orig-fun session-directory)
+    (file-notify-error
+     (unless (file-remote-p session-directory)
+       (signal (car err) (cdr err))))))
 
 (defun dtach-bootstrap--enable-detached-advice ()
   "Enable dtach-bootstrap advice for detached.el."
+  (dtach-bootstrap-setup-detached-connection-local)
   (if (fboundp 'detached-start-session)
-      (unless (advice-member-p #'dtach-bootstrap--around-detached-start-session
-                               'detached-start-session)
-        (advice-add 'detached-start-session
-                    :around #'dtach-bootstrap--around-detached-start-session))
+      (progn
+        (unless (advice-member-p #'dtach-bootstrap--around-detached-create-session
+                                 'detached-create-session)
+          (advice-add 'detached-create-session
+                      :around #'dtach-bootstrap--around-detached-create-session))
+        (unless (advice-member-p #'dtach-bootstrap--around-detached-start-session
+                                 'detached-start-session)
+          (advice-add 'detached-start-session
+                      :around #'dtach-bootstrap--around-detached-start-session))
+        (when (fboundp 'detached--valid-dtach-executable-p)
+          (unless (advice-member-p #'dtach-bootstrap--around-detached-valid-dtach-executable-p
+                                   'detached--valid-dtach-executable-p)
+            (advice-add 'detached--valid-dtach-executable-p
+                        :around #'dtach-bootstrap--around-detached-valid-dtach-executable-p)))
+        (when (fboundp 'detached--watch-session-directory)
+          (unless (advice-member-p #'dtach-bootstrap--around-detached-watch-session-directory
+                                   'detached--watch-session-directory)
+            (advice-add 'detached--watch-session-directory
+                        :around #'dtach-bootstrap--around-detached-watch-session-directory))))
     (with-eval-after-load 'detached
       (when dtach-bootstrap-detached-mode
         (dtach-bootstrap--enable-detached-advice)))))
 
 (defun dtach-bootstrap--disable-detached-advice ()
   "Disable dtach-bootstrap advice for detached.el."
+  (when (fboundp 'detached-create-session)
+    (advice-remove 'detached-create-session
+                   #'dtach-bootstrap--around-detached-create-session))
   (when (fboundp 'detached-start-session)
     (advice-remove 'detached-start-session
-                   #'dtach-bootstrap--around-detached-start-session)))
+                   #'dtach-bootstrap--around-detached-start-session))
+  (when (fboundp 'detached--valid-dtach-executable-p)
+    (advice-remove 'detached--valid-dtach-executable-p
+                   #'dtach-bootstrap--around-detached-valid-dtach-executable-p))
+  (when (fboundp 'detached--watch-session-directory)
+    (advice-remove 'detached--watch-session-directory
+                   #'dtach-bootstrap--around-detached-watch-session-directory)))
 
 ;;;###autoload
 (define-minor-mode dtach-bootstrap-detached-mode

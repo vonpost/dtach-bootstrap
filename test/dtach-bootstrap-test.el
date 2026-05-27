@@ -108,6 +108,8 @@
   (let ((dtach-bootstrap-detached-missing-action 'prompt))
     (cl-letf (((symbol-function 'dtach-bootstrap--detached-program-usable-p)
                (lambda (&rest _) nil))
+              ((symbol-function 'dtach-bootstrap--cached-dtach)
+               (lambda (&rest _) nil))
               ((symbol-function 'y-or-n-p)
                (lambda (_prompt) t))
               ((symbol-function 'dtach-bootstrap-ensure-for-directory)
@@ -119,6 +121,50 @@
                 (lambda () (symbol-value 'detached-dtach-program)))
                "/remote/cache/bin/dtach"))
       (should (equal (symbol-value 'detached-dtach-program) "dtach")))))
+
+(ert-deftest dtach-bootstrap-test-detached-advice-uses-cache-before-prompt ()
+  (set 'detached-dtach-program "dtach")
+  (cl-letf (((symbol-function 'dtach-bootstrap--detached-program-usable-p)
+             (lambda (&rest _) nil))
+            ((symbol-function 'dtach-bootstrap--cached-dtach)
+             (lambda (_directory) "/remote/cache/bin/dtach"))
+            ((symbol-function 'dtach-bootstrap--detached-bootstrap-program)
+             (lambda (&rest _)
+               (error "Should not prompt when cached dtach is usable"))))
+    (should (equal
+             (dtach-bootstrap--around-detached-start-session
+              (lambda () (symbol-value 'detached-dtach-program)))
+             "/remote/cache/bin/dtach"))))
+
+(ert-deftest dtach-bootstrap-test-detached-create-session-binds-session-directory ()
+  (let ((default-directory "/ssh:example:~/project/")
+        (dtach-bootstrap-detached-session-directory "~/.cache/detached/sessions")
+        (setup-called nil))
+    (cl-letf (((symbol-function 'dtach-bootstrap-setup-detached-connection-local)
+               (lambda (&optional program)
+                 (should-not program)
+                 (setq setup-called t))))
+      (should (equal
+               (dtach-bootstrap--around-detached-create-session
+                (lambda ()
+                  :created))
+               :created))
+      (should setup-called))))
+
+(ert-deftest dtach-bootstrap-test-detached-connection-local-variables ()
+  (let ((dtach-bootstrap-detached-session-directory "~/.cache/detached/sessions"))
+    (should (equal
+             (dtach-bootstrap--detached-connection-local-variables
+              "/root/.cache/dtach-bootstrap/bin/dtach")
+             '((detached-session-directory . "~/.cache/detached/sessions")
+               (detached-dtach-program . "/root/.cache/dtach-bootstrap/bin/dtach"))))))
+
+(ert-deftest dtach-bootstrap-test-detached-watch-ignores-remote-file-notify-error ()
+  (should-not
+   (dtach-bootstrap--around-detached-watch-session-directory
+    (lambda (_directory)
+      (signal 'file-notify-error '("No file notification program found")))
+    "/ssh:example:/home/me/.cache/detached/sessions")))
 
 (ert-deftest dtach-bootstrap-test-setup-detached-sets-program ()
   (set 'detached-dtach-program "dtach")

@@ -129,6 +129,16 @@ in `config.el`:
   (dtach-bootstrap-detached-mode 1))
 ```
 
+The remaps affect normal key dispatch, for example `M-&` resolves to
+`detached-shell-command`.  Running `M-x async-shell-command` by name still calls
+the original command.  Check `C-h k M-&` if Doom still appears to use the stock
+async shell command.
+
+For TRAMP sessions, `dtach-bootstrap-detached-mode` also installs
+connection-local detached settings.  It uses `~/.cache/detached/sessions` for
+remote session metadata and updates `detached-dtach-program` to the selected
+target-local dtach path before detached starts the session.
+
 Run `doom sync` after changing `packages.el`.
 
 ## detached.el
@@ -139,10 +149,12 @@ For automatic per-target setup, enable:
 (dtach-bootstrap-detached-mode 1)
 ```
 
-This advises `detached-start-session` and binds `detached-dtach-program` to the
-current usable dtach path for `default-directory`.  If detached's configured
-dtach program is missing on that target, dtach-bootstrap prompts before
-building and installing one.
+This advises detached session creation and startup so remote session metadata
+is created under `~/.cache/detached/sessions`, `detached-dtach-program` is set
+to the selected target-local dtach path, and unsupported TRAMP file-notify
+watches do not prevent command startup.  If detached's configured dtach program
+is missing on that target, dtach-bootstrap prompts before building and
+installing one.
 
 `use-package` can also install a system package:
 
