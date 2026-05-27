@@ -59,6 +59,21 @@
                          (file-name-as-directory root))))
       (delete-directory root t))))
 
+(ert-deftest dtach-bootstrap-test-find-flake-directory-follows-straight-symlink ()
+  (let* ((root (make-temp-file "dtach-bootstrap-test-" t))
+         (repo (expand-file-name "repos/dtach-bootstrap" root))
+         (build (expand-file-name "build/dtach-bootstrap" root)))
+    (unwind-protect
+        (progn
+          (make-directory repo t)
+          (make-directory build t)
+          (write-region "" nil (expand-file-name "flake.nix" repo))
+          (make-symbolic-link (expand-file-name "flake.nix" repo)
+                              (expand-file-name "flake.nix" build))
+          (should (equal (dtach-bootstrap--find-flake-directory build)
+                         (file-name-as-directory repo))))
+      (delete-directory root t))))
+
 (ert-deftest dtach-bootstrap-test-nix-package-reference ()
   (let ((dtach-bootstrap-nix-package ".#dtach-x86_64-linux"))
     (should (equal (dtach-bootstrap--nix-package-reference

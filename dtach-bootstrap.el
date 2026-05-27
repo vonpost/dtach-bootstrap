@@ -54,7 +54,7 @@
   (when-let* ((library (or load-file-name
                            buffer-file-name
                            (locate-library "dtach-bootstrap"))))
-    (file-name-directory library))
+    (file-name-directory (file-truename library)))
   "Local directory containing the dtach-bootstrap flake.
 
 If this points at a subdirectory of the package, dtach-bootstrap searches
@@ -284,22 +284,23 @@ Signal an error when the command fails."
 (defun dtach-bootstrap--find-flake-directory (directory)
   "Return nearest ancestor of DIRECTORY containing flake.nix, or nil."
   (when directory
-    (let ((directory (file-name-as-directory (expand-file-name directory)))
+    (let ((directory (file-name-as-directory (file-truename directory)))
           found)
       (while (and directory (not found))
-        (if (file-exists-p (expand-file-name "flake.nix" directory))
-            (setq found directory)
-          (let ((parent (file-name-directory (directory-file-name directory))))
-            (setq directory
-                  (unless (or (null parent) (string= parent directory))
-                    parent)))))
+        (let ((flake (expand-file-name "flake.nix" directory)))
+          (if (file-exists-p flake)
+              (setq found (file-name-directory (file-truename flake)))
+            (let ((parent (file-name-directory (directory-file-name directory))))
+              (setq directory
+                    (unless (or (null parent) (string= parent directory))
+                      parent))))))
       found)))
 
 (defun dtach-bootstrap--resolve-flake-directory ()
   "Return the local flake directory, or signal a clear error."
   (let* ((candidate (or dtach-bootstrap-nix-flake-directory
                         (when-let* ((library (locate-library "dtach-bootstrap")))
-                          (file-name-directory library))))
+                          (file-name-directory (file-truename library)))))
          (flake-directory (dtach-bootstrap--find-flake-directory candidate)))
     (unless flake-directory
       (error "Nix flake directory not found from %S: set `dtach-bootstrap-nix-flake-directory' to the dtach-bootstrap repo directory"
